@@ -132,6 +132,165 @@ show_dependencies() {
 }
 
 # -----------------------------------------------------------------------------
+# Assessment tool installation / wrappers
+# -----------------------------------------------------------------------------
+install_assessment_tools() {
+    header
+    section "Install Security Assessment Tools"
+
+    printf '%bThis installs common security assessment utilities for authorized testing only.%b\n\n' "$YELLOW" "$RESET"
+
+    if [[ "$(id -u 2>/dev/null || printf '0')" -ne 0 ]]; then
+        warning "Root or sudo access is required to install packages."
+        pause_screen
+        return
+    fi
+
+    local package_list=(nmap nikto hydra sqlmap)
+    local missing=()
+    local pkg
+
+    for pkg in "${package_list[@]}"; do
+        if ! command_exists "$pkg"; then
+            missing+=("$pkg")
+        fi
+    done
+
+    if (( ${#missing[@]} == 0 )); then
+        success "All assessment tools are already installed."
+        pause_screen
+        return
+    fi
+
+    printf 'Installing: %s\n' "${missing[*]}"
+
+    if command_exists apt-get; then
+        DEBIAN_FRONTEND=noninteractive apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
+    elif command_exists yum; then
+        yum install -y "${missing[@]}"
+    elif command_exists dnf; then
+        dnf install -y "${missing[@]}"
+    elif command_exists pacman; then
+        pacman -S --noconfirm "${missing[@]}"
+    else
+        warning "No supported package manager was found on this system."
+        pause_screen
+        return
+    fi
+
+    success "Assessment tool installation completed."
+    log "Assessment tools installation attempted"
+    pause_screen
+}
+
+run_nmap_scan() {
+    header
+    section "Nmap Port Scan"
+
+    read -r -p "Enter an authorized target host or IP: " target
+    if [[ -z "$target" ]]; then
+        error_msg "No target supplied."
+        pause_screen
+        return
+    fi
+
+    if ! command_exists nmap; then
+        warning "nmap is not installed. Use the assessment tool install option first."
+        pause_screen
+        return
+    fi
+
+    printf '%bScanning %s with nmap...%b\n\n' "$YELLOW" "$target" "$RESET"
+    nmap -sS -sV -A -T4 "$target" -oN "$REPORT_DIR/nmap_scan.txt"
+    log "Nmap scan executed against ${target}"
+    pause_screen
+}
+
+run_nikto_scan() {
+    header
+    section "Nikto Web Scanner"
+
+    read -r -p "Enter an authorized website URL: " target
+    if [[ -z "$target" ]]; then
+        error_msg "No URL supplied."
+        pause_screen
+        return
+    fi
+
+    if ! command_exists nikto; then
+        warning "nikto is not installed. Use the assessment tool install option first."
+        pause_screen
+        return
+    fi
+
+    local url
+    url="$(normalize_url "$target")"
+    printf '%bScanning %s with Nikto...%b\n\n' "$YELLOW" "$url" "$RESET"
+    nikto -h "$url" -output "$REPORT_DIR/nikto_scan.txt"
+    log "Nikto scan executed for ${url}"
+    pause_screen
+}
+
+run_hydra_scan() {
+    header
+    section "Hydra Credential Tester"
+
+    printf '%bThis module is for authorized credential testing against your own targets only.%b\n\n' "$YELLOW" "$RESET"
+
+    if ! command_exists hydra; then
+        warning "hydra is not installed. Use the assessment tool install option first."
+        pause_screen
+        return
+    fi
+
+    read -r -p "Target host: " target
+    read -r -p "Service (ssh/ftp/http-post-form): " service
+    read -r -p "Username list: " userlist
+    read -r -p "Password list: " passlist
+
+    if [[ -z "$target" || -z "$service" || -z "$userlist" || -z "$passlist" ]]; then
+        error_msg "Target, service, user list, and password list are required."
+        pause_screen
+        return
+    fi
+
+    if [[ ! -f "$userlist" || ! -f "$passlist" ]]; then
+        error_msg "The provided wordlist paths do not exist."
+        pause_screen
+        return
+    fi
+
+    printf '%bRunning Hydra against %s on %s...%b\n\n' "$YELLOW" "$target" "$service" "$RESET"
+    hydra -L "$userlist" -P "$passlist" "$target" "$service" -o "$REPORT_DIR/hydra_scan.txt"
+    log "Hydra scan executed against ${target} using ${service}"
+    pause_screen
+}
+
+run_sqlmap_scan() {
+    header
+    section "SQLMap Scanner"
+
+    if ! command_exists sqlmap; then
+        warning "sqlmap is not installed. Use the assessment tool install option first."
+        pause_screen
+        return
+    fi
+
+    read -r -p "Enter an authorized target URL to test: " target
+    if [[ -z "$target" ]]; then
+        error_msg "No target URL supplied."
+        pause_screen
+        return
+    fi
+
+    printf '%bRunning SQLMap against %s...%b\n\n' "$YELLOW" "$target" "$RESET"
+    sqlmap -u "$target" --batch --output-dir "$REPORT_DIR/sqlmap"
+    log "SQLMap scan executed for ${target}"
+    pause_screen
+}
+
+# -----------------------------------------------------------------------------
 # Banner
 # -----------------------------------------------------------------------------
 show_banner() {
@@ -1219,6 +1378,12 @@ main_menu() {
         printf '  %b[14]%b File Hash Analyzer\n' "$CYAN" "$RESET"
         printf '  %b[15]%b File Permission Checker\n' "$CYAN" "$RESET"
         printf '  %b[16]%b Password Strength Checker\n' "$CYAN" "$RESET"
+        printf '\n%bASSESSMENT TOOLS%b\n\n' "$WHITE" "$RESET"
+        printf '  %b[22]%b Install Assessment Tools\n' "$CYAN" "$RESET"
+        printf '  %b[23]%b Nmap Port Scan\n' "$CYAN" "$RESET"
+        printf '  %b[24]%b Nikto Web Scanner\n' "$CYAN" "$RESET"
+        printf '  %b[25]%b Hydra Credential Tester\n' "$CYAN" "$RESET"
+        printf '  %b[26]%b SQLMap Scanner\n' "$CYAN" "$RESET"
         printf '\n%bREPORTS / SYSTEM%b\n\n' "$WHITE" "$RESET"
         printf '  %b[17]%b Generate Security Report\n' "$CYAN" "$RESET"
         printf '  %b[18]%b View Last Report\n' "$CYAN" "$RESET"
@@ -1253,6 +1418,11 @@ main_menu() {
             19) list_reports ;;
             20) show_dependencies ;;
             21) environment_check ;;
+            22) install_assessment_tools ;;
+            23) run_nmap_scan ;;
+            24) run_nikto_scan ;;
+            25) run_hydra_scan ;;
+            26) run_sqlmap_scan ;;
             h|H) show_help ;;
             0)
                 printf '\n%bCyberShield shutting down. Stay secure. 🛡️%b\n' "$GREEN" "$RESET"
